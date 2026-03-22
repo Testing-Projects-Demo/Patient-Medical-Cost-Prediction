@@ -16,23 +16,106 @@ FEATURES_PATH       = 'selected_features.pkl'
 IMG_DIR             = 'img'
 
 # ── Dataset Values (exact values from dataset) ─────────
-MEDICAL_CONDITIONS = ['Arthritis', 'Asthma', 'Cancer', 'Diabetes', 'Hypertension', 'Obesity']
+MEDICAL_CONDITIONS  = ['Arthritis', 'Asthma', 'Cancer', 'Diabetes', 'Hypertension', 'Obesity']
 INSURANCE_PROVIDERS = ['Aetna', 'Blue Cross', 'Cigna', 'Medicare', 'UnitedHealthcare']
-BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
-ADMISSION_TYPES = ['Elective', 'Emergency', 'Urgent']
+BLOOD_TYPES         = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
+ADMISSION_TYPES     = ['Elective', 'Emergency', 'Urgent']
+TEST_RESULTS        = ['Normal', 'Inconclusive', 'Abnormal']
+GENDERS             = ['Male', 'Female']
+ROOM_TYPES          = ['General Ward', 'Semi-Private', 'Private', 'ICU']
+
+# ── Dataset medications (kept for model encoding compatibility) ─────────
+# These are the original values used during model training.
+# DO NOT remove — they are needed for feature encoding in model_prediction.py.
 MEDICATIONS = ['Aspirin', 'Ibuprofen', 'Lipitor', 'Paracetamol', 'Penicillin']
-TEST_RESULTS = ['Normal', 'Inconclusive', 'Abnormal']
-GENDERS = ['Male', 'Female']
-ROOM_TYPES = ['General Ward', 'Semi-Private', 'Private', 'ICU']
+
+# ── Real Clinical Medications per Disease ──────────────
+# Used only in app.py for the patient-facing dropdown.
+# Each condition maps to a list of clinically appropriate drugs.
+# Displayed as "Drug Name (Drug Class)" for clarity.
+CONDITION_MEDICATIONS = {
+    'Arthritis': [
+        'Methotrexate (DMARD)',
+        'Hydroxychloroquine (DMARD)',
+        'Sulfasalazine (DMARD)',
+        'Naproxen (NSAID)',
+        'Diclofenac (NSAID)',
+        'Celecoxib (COX-2 inhibitor)',
+        'Prednisolone (Corticosteroid)',
+        'Etanercept (Biologic)',
+        'Adalimumab (Biologic)',
+        'Leflunomide (DMARD)',
+    ],
+    'Asthma': [
+        'Salbutamol (SABA inhaler)',
+        'Formoterol (LABA inhaler)',
+        'Salmeterol (LABA inhaler)',
+        'Budesonide (ICS inhaler)',
+        'Fluticasone (ICS inhaler)',
+        'Beclomethasone (ICS inhaler)',
+        'Montelukast (Leukotriene antagonist)',
+        'Ipratropium (Anticholinergic)',
+        'Theophylline (Methylxanthine)',
+        'Prednisolone (Oral corticosteroid)',
+    ],
+    'Cancer': [
+        'Doxorubicin (Anthracycline chemo)',
+        'Paclitaxel (Taxane chemo)',
+        'Cisplatin (Platinum chemo)',
+        'Cyclophosphamide (Alkylating chemo)',
+        'Fluorouracil (Antimetabolite chemo)',
+        'Tamoxifen (Hormonal therapy)',
+        'Anastrozole (Aromatase inhibitor)',
+        'Trastuzumab (Targeted therapy)',
+        'Rituximab (Monoclonal antibody)',
+        'Imatinib (Tyrosine kinase inhibitor)',
+    ],
+    'Diabetes': [
+        'Metformin (Biguanide)',
+        'Glibenclamide (Sulfonylurea)',
+        'Glipizide (Sulfonylurea)',
+        'Sitagliptin (DPP-4 inhibitor)',
+        'Vildagliptin (DPP-4 inhibitor)',
+        'Empagliflozin (SGLT-2 inhibitor)',
+        'Dapagliflozin (SGLT-2 inhibitor)',
+        'Liraglutide (GLP-1 agonist)',
+        'Insulin Glargine (Long-acting insulin)',
+        'Insulin Aspart (Rapid-acting insulin)',
+    ],
+    'Hypertension': [
+        'Amlodipine (Calcium channel blocker)',
+        'Nifedipine (Calcium channel blocker)',
+        'Enalapril (ACE inhibitor)',
+        'Ramipril (ACE inhibitor)',
+        'Losartan (ARB)',
+        'Telmisartan (ARB)',
+        'Hydrochlorothiazide (Thiazide diuretic)',
+        'Furosemide (Loop diuretic)',
+        'Atenolol (Beta-blocker)',
+        'Metoprolol (Beta-blocker)',
+    ],
+    'Obesity': [
+        'Orlistat (Lipase inhibitor)',
+        'Liraglutide 3mg (GLP-1 agonist)',
+        'Semaglutide (GLP-1 agonist)',
+        'Phentermine (Appetite suppressant)',
+        'Topiramate (Anticonvulsant / weight loss)',
+        'Naltrexone/Bupropion (Combination)',
+        'Metformin (Off-label, insulin sensitiser)',
+        'Atorvastatin (Statin — for comorbid lipids)',
+        'Canagliflozin (SGLT-2 — for comorbid diabetes)',
+        'Levothyroxine (If hypothyroid-related obesity)',
+    ],
+}
 
 # ── Risk Scores per Condition ──────────────────────────
 RISK_MAP = {
-    'Cancer':      3,
-    'Diabetes':    2,
-    'Hypertension':2,
-    'Obesity':     1,
-    'Arthritis':   1,
-    'Asthma':      1
+    'Cancer':       3,
+    'Diabetes':     2,
+    'Hypertension': 2,
+    'Obesity':      1,
+    'Arthritis':    1,
+    'Asthma':       1
 }
 
 # ── Test Result Encoding ───────────────────────────────
@@ -62,17 +145,17 @@ ONEHOT_COLUMNS = [
 ]
 
 # ── Model Training Parameters ──────────────────────────
-RANDOM_STATE     = 42
-TEST_SIZE        = 0.30
-VAL_SIZE         = 0.50
-BATCH_SIZE       = 32
-MAX_EPOCHS       = 100
-LEARNING_RATE    = 0.001
+RANDOM_STATE          = 42
+TEST_SIZE             = 0.30
+VAL_SIZE              = 0.50
+BATCH_SIZE            = 32
+MAX_EPOCHS            = 100
+LEARNING_RATE         = 0.001
 EARLY_STOP_PATIENCE   = 10
 REDUCE_LR_PATIENCE    = 5
 REDUCE_LR_FACTOR      = 0.5
-MIN_LR               = 1e-6
-NUM_FEATURES         = 20
+MIN_LR                = 1e-6
+NUM_FEATURES          = 20
 
 # ── Neural Network Architecture ────────────────────────
 NN_LAYERS    = [128, 64, 32, 16]
