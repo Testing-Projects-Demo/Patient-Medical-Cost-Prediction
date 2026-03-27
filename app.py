@@ -2,13 +2,15 @@
 app.py
 ------
 Step 3 of the Patient Medical Cost Prediction pipeline.
-Multi-page Streamlit web application with:
-  Page 1 — Predict Cost   : patient + attender details, form, prediction, printable A4 invoice
-  Page 2 — Patient Records: lookup by Patient ID, view all records
-  Page 3 — Data Analysis  : EDA charts from raw dataset
-  Page 4 — Model Report   : 10 individual training charts + metrics table
+Multi-page Streamlit web application.
 
-Invoice rendered via st.components.v1.html() — full A4 width with Print/Download PDF button.
+Changes:
+  - Branding: City General Hospital → Medical Cost AI
+  - Billing header (was Invoice)
+  - Patient No (was Invoice No)
+  - Planned stay fully automatic — driven by condition (CONDITION_STAY_DAYS)
+  - Room type fully automatic — driven by condition (CONDITION_ROOM_TYPE)
+  - Live cost preview updates as fields change (before submit)
 """
 
 import os
@@ -28,7 +30,7 @@ from config import (
     ADMISSION_TYPES, MEDICATIONS, TEST_RESULTS, ROOM_TYPES,
     RISK_MAP, TEST_RESULT_MAP, AGE_MIN, AGE_MAX,
     STAY_MIN, STAY_MAX, STAY_DEFAULT, APP_TITLE, APP_ICON, APP_LAYOUT,
-    CONDITION_MEDICATIONS
+    CONDITION_MEDICATIONS, CONDITION_STAY_DAYS, CONDITION_ROOM_TYPE
 )
 
 # ══════════════════════════════════════════════════════
@@ -174,6 +176,31 @@ st.markdown("""
     .med-info-drug { font-size: 1.05rem; font-weight: 700; color: #0c4a6e; margin-bottom: 6px; }
     .med-info-row  { font-size: 0.88rem; color: #334155; margin-bottom: 4px; line-height: 1.5; }
 
+    /* Auto-assigned info box */
+    .auto-info-box {
+        background: #f0fdf4; border: 1px solid #bbf7d0;
+        border-left: 4px solid #16a34a; border-radius: 8px;
+        padding: 14px 18px; margin-bottom: 16px;
+        display: flex; flex-wrap: wrap; gap: 20px;
+    }
+    .auto-info-item { display: flex; flex-direction: column; }
+    .auto-info-label { font-size: 0.70rem; color: #166534; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
+    .auto-info-value { font-size: 1.0rem; font-weight: 700; color: #14532d; }
+
+    /* Live preview box */
+    .preview-box {
+        background: #fffbeb; border: 1px solid #fde68a;
+        border-left: 4px solid #f59e0b; border-radius: 8px;
+        padding: 16px 20px; margin-bottom: 20px;
+    }
+    .preview-title { font-size: 0.80rem; font-weight: 700; color: #92400e;
+        text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+    .preview-cost  { font-size: 1.6rem; font-weight: 700; color: #78350f; }
+    .preview-range { font-size: 0.80rem; color: #92400e; margin-top: 3px; }
+    .preview-rows  { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+    .preview-row   { font-size: 0.82rem; color: #78350f; }
+
     .stButton > button {
         background: linear-gradient(135deg, #203a43, #2c5364) !important;
         color: white !important; border: none !important;
@@ -303,15 +330,32 @@ def compute_breakdown(prediction, medical_condition, planned_stay) -> dict:
     oth  = round(max(prediction - base - cond - stay - med, 0), 2)
     return {'base': base, 'condition': cond, 'stay': stay, 'medication': med, 'other': oth}
 
+def quick_predict(age, gender, blood_type, insurance_provider,
+                  medical_condition, test_result, admission_type, planned_stay):
+    """Quick prediction for live preview — returns (prediction, lower, upper, bd)."""
+    try:
+        encoded_med = closest_dataset_medication(medical_condition)
+        df_in, _    = build_input_df(age, gender, blood_type, insurance_provider,
+                                     medical_condition, test_result, admission_type,
+                                     encoded_med, planned_stay)
+        pred        = float(max(model.predict(df_in, verbose=0)[0][0], 0))
+        MAE         = 12318
+        low         = max(pred - MAE, 0)
+        high        = pred + MAE
+        bd          = compute_breakdown(pred, medical_condition, planned_stay)
+        return pred, low, high, bd
+    except Exception:
+        return None, None, None, None
+
 
 # ══════════════════════════════════════════════════════
-# INVOICE RENDERER
-# Full A4 invoice rendered in iframe via components.html()
-# Print / Download PDF button uses window.print() with
-# @media print CSS that formats to exact A4 dimensions.
+# BILLING RENDERER  (was Invoice)
+# Branding: Medical Cost AI
+# Header:   BILLING  (was INVOICE)
+# ID label: Patient No  (was Invoice No)
 # ══════════════════════════════════════════════════════
 
-def render_invoice(patient_name, patient_id, reg_date, reg_time,
+def render_billing(patient_name, patient_id, reg_date, reg_time,
                    age, gender, blood_type, insurance_provider,
                    medical_condition, admission_type, medication_display,
                    planned_stay, room_type,
@@ -330,9 +374,7 @@ def render_invoice(patient_name, patient_id, reg_date, reg_time,
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-  /* ── Reset ── */
   *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-
   body {{
     font-family: 'DM Sans', sans-serif;
     background: #f1f5f9;
@@ -340,83 +382,63 @@ def render_invoice(patient_name, patient_id, reg_date, reg_time,
     color: #1e293b;
   }}
 
-  /* ── Print button (hidden when printing) ── */
+  /* Print button */
   .print-bar {{
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    margin-bottom: 12px;
+    display: flex; justify-content: flex-end;
+    gap: 10px; margin-bottom: 12px;
   }}
   .btn-print {{
     background: linear-gradient(135deg, #0f2027, #2c5364);
-    color: #ffffff;
-    border: none;
-    padding: 10px 24px;
-    border-radius: 8px;
-    font-size: 0.92rem;
-    font-weight: 600;
+    color: #ffffff; border: none;
+    padding: 10px 24px; border-radius: 8px;
+    font-size: 0.92rem; font-weight: 600;
     font-family: 'DM Sans', sans-serif;
-    cursor: pointer;
-    letter-spacing: 0.5px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    cursor: pointer; letter-spacing: 0.5px;
+    display: flex; align-items: center; gap: 8px;
   }}
   .btn-print:hover {{ opacity: 0.9; }}
 
-  /* ── A4 page wrapper ── */
+  /* A4 page */
   .page {{
     background: #ffffff;
-    width: 210mm;
-    min-height: 297mm;
+    width: 210mm; min-height: 297mm;
     margin: 0 auto;
     border-radius: 4px;
     box-shadow: 0 4px 24px rgba(0,0,0,0.12);
     overflow: hidden;
-    display: flex;
-    flex-direction: column;
+    display: flex; flex-direction: column;
   }}
 
-  /* ── Header ── */
-  .inv-header {{
+  /* Header */
+  .bill-header {{
     background: linear-gradient(135deg, #0f2027 0%, #2c5364 100%);
     padding: 28px 36px 22px 36px;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
+    display: flex; justify-content: space-between; align-items: flex-start;
   }}
-  .hosp-name {{
+  .brand-name {{
     font-family: 'DM Serif Display', serif;
-    font-size: 1.6rem;
-    color: #ffffff;
+    font-size: 1.7rem; color: #ffffff; letter-spacing: 0.5px;
     margin-bottom: 3px;
-    letter-spacing: 0.3px;
   }}
-  .hosp-sub  {{ font-size: 0.70rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.8px; }}
-  .hosp-addr {{ color: #94a3b8; font-size: 0.74rem; margin-top: 8px; line-height: 1.7; }}
-  .inv-title-blk {{ text-align: right; }}
-  .inv-title {{
+  .brand-sub  {{ font-size: 0.70rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px; }}
+  .brand-addr {{ color: #94a3b8; font-size: 0.73rem; margin-top: 8px; line-height: 1.7; }}
+
+  .bill-title-blk {{ text-align: right; }}
+  .bill-title {{
     font-family: 'DM Serif Display', serif;
-    font-size: 2.2rem; font-weight: 700;
+    font-size: 2.4rem; font-weight: 700;
     color: #ffffff; letter-spacing: 6px;
   }}
-  .inv-number {{ font-size: 0.82rem; color: #7dd3fc; margin-top: 5px; letter-spacing: 1px; }}
+  .bill-patno {{ font-size: 0.85rem; color: #7dd3fc; margin-top: 6px; letter-spacing: 1px; }}
 
-  /* ── Meta strip ── */
-  .inv-meta {{
-    display: flex;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 0;
-    background: #f0f4f8;
-    border-bottom: 2px solid #dde3ea;
-    padding: 0;
+  /* Meta strip */
+  .bill-meta {{
+    display: flex; justify-content: space-between; flex-wrap: wrap;
+    background: #f0f4f8; border-bottom: 2px solid #dde3ea;
   }}
   .meta-cell {{
-    padding: 16px 24px;
-    border-right: 1px solid #dde3ea;
-    flex: 1;
-    min-width: 150px;
+    padding: 16px 24px; border-right: 1px solid #dde3ea;
+    flex: 1; min-width: 150px;
   }}
   .meta-cell:last-child {{ border-right: none; }}
   .meta-lbl {{
@@ -432,41 +454,37 @@ def render_invoice(patient_name, patient_id, reg_date, reg_time,
     color: #0f2027; letter-spacing: 3px;
   }}
 
-  /* ── Body ── */
-  .inv-body {{ padding: 28px 36px; flex: 1; }}
+  /* Body */
+  .bill-body {{ padding: 28px 36px; flex: 1; }}
 
-  /* ── Line-items table ── */
-  .inv-table {{ width: 100%; border-collapse: collapse; margin-bottom: 24px; }}
-  .inv-table thead tr {{ background: #1e3a4a; }}
-  .inv-table thead th {{
-    padding: 11px 14px;
-    font-size: 0.70rem;
-    text-transform: uppercase;
-    letter-spacing: 1.1px;
-    font-weight: 600;
-    color: #ffffff;
-    text-align: left;
+  /* Line-items table */
+  .bill-table {{ width: 100%; border-collapse: collapse; margin-bottom: 24px; }}
+  .bill-table thead tr {{ background: #1e3a4a; }}
+  .bill-table thead th {{
+    padding: 11px 14px; font-size: 0.70rem;
+    text-transform: uppercase; letter-spacing: 1.1px;
+    font-weight: 600; color: #ffffff; text-align: left;
   }}
-  .inv-table thead th:last-child {{ text-align: right; }}
-  .inv-table tbody tr {{ border-bottom: 1px solid #eef2f7; }}
-  .inv-table tbody tr:nth-child(even) {{ background: #f8fafc; }}
-  .inv-table tbody td {{
-    padding: 12px 14px;
-    font-size: 0.88rem;
-    color: #334155;
-    vertical-align: top;
+  .bill-table thead th:last-child {{ text-align: right; }}
+  .bill-table tbody tr {{ border-bottom: 1px solid #eef2f7; }}
+  .bill-table tbody tr:nth-child(even) {{ background: #f8fafc; }}
+  .bill-table tbody td {{
+    padding: 12px 14px; font-size: 0.88rem;
+    color: #334155; vertical-align: top;
   }}
-  .inv-table tbody td:last-child {{ text-align: right; font-weight: 600; white-space: nowrap; color: #0f2027; }}
-  .inv-desc {{ display: block; font-size: 0.74rem; color: #64748b; margin-top: 3px; }}
+  .bill-table tbody td:last-child {{
+    text-align: right; font-weight: 600;
+    white-space: nowrap; color: #0f2027;
+  }}
+  .item-desc {{ display: block; font-size: 0.74rem; color: #64748b; margin-top: 3px; }}
 
-  /* ── Totals ── */
+  /* Totals */
   .totals-wrap {{ display: flex; justify-content: flex-end; margin-bottom: 8px; }}
   .totals-box  {{ width: 340px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }}
   .tot-row {{
     display: flex; justify-content: space-between; align-items: center;
     padding: 10px 16px; font-size: 0.88rem; color: #475569;
-    border-bottom: 1px solid #f1f5f9;
-    background: #ffffff;
+    border-bottom: 1px solid #f1f5f9; background: #ffffff;
   }}
   .tot-row span:last-child {{ font-weight: 600; }}
   .tot-green {{ color: #16a34a !important; }}
@@ -478,81 +496,50 @@ def render_invoice(patient_name, patient_id, reg_date, reg_time,
   .tot-total span {{ color: #ffffff; font-size: 1.1rem; font-weight: 700; letter-spacing: 0.3px; }}
   .tot-range {{
     padding: 10px 16px; font-size: 0.74rem; color: #64748b;
-    line-height: 1.6; background: #f8fafc;
-    border-top: 1px solid #e2e8f0;
+    line-height: 1.6; background: #f8fafc; border-top: 1px solid #e2e8f0;
   }}
 
-  /* ── Signature strip ── */
+  /* Signature strip */
   .sig-strip {{
-    display: flex;
-    justify-content: space-between;
-    margin-top: 36px;
-    padding-top: 16px;
+    display: flex; justify-content: space-between;
+    margin-top: 36px; padding-top: 16px;
     border-top: 1px dashed #cbd5e1;
   }}
-  .sig-box {{ text-align: center; width: 160px; }}
+  .sig-box  {{ text-align: center; width: 160px; }}
   .sig-line {{ border-bottom: 1px solid #334155; margin-bottom: 6px; height: 36px; }}
   .sig-lbl  {{ font-size: 0.72rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }}
 
-  /* ── Footer ── */
-  .inv-footer {{
-    background: #1e3a4a;
-    padding: 14px 36px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
+  /* Footer */
+  .bill-footer {{
+    background: #1e3a4a; padding: 14px 36px;
+    display: flex; justify-content: space-between;
+    align-items: center; flex-wrap: wrap; gap: 10px;
     margin-top: auto;
   }}
-  .foot-note {{ font-size: 0.72rem; color: #94a3b8; line-height: 1.6; }}
+  .foot-note  {{ font-size: 0.72rem; color: #94a3b8; line-height: 1.6; }}
   .foot-stamp {{
-    background: rgba(255,255,255,0.12);
-    color: #e2e8f0;
-    padding: 6px 16px;
-    border-radius: 4px;
-    font-size: 0.68rem;
-    font-weight: 600;
-    letter-spacing: 1.8px;
-    text-transform: uppercase;
+    background: rgba(255,255,255,0.12); color: #e2e8f0;
+    padding: 6px 16px; border-radius: 4px;
+    font-size: 0.68rem; font-weight: 600;
+    letter-spacing: 1.8px; text-transform: uppercase;
     border: 1px solid rgba(255,255,255,0.2);
     white-space: nowrap;
   }}
 
-  /* ── PRINT STYLES ── */
+  /* Print styles */
   @media print {{
-    @page {{
-      size: A4 portrait;
-      margin: 0;
-    }}
+    @page {{ size: A4 portrait; margin: 0; }}
     body {{
-      background: #ffffff !important;
-      padding: 0 !important;
-      margin: 0 !important;
+      background: #ffffff !important; padding: 0 !important;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }}
     .print-bar {{ display: none !important; }}
     .page {{
-      width: 210mm !important;
-      min-height: 297mm !important;
-      margin: 0 !important;
-      border-radius: 0 !important;
-      box-shadow: none !important;
+      width: 210mm !important; min-height: 297mm !important;
+      margin: 0 !important; border-radius: 0 !important; box-shadow: none !important;
     }}
-    .inv-header {{
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }}
-    .inv-footer {{
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }}
-    .tot-total {{
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }}
-    .inv-table thead tr {{
+    .bill-header, .bill-footer, .tot-total, .bill-table thead tr {{
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }}
@@ -561,36 +548,33 @@ def render_invoice(patient_name, patient_id, reg_date, reg_time,
 </head>
 <body>
 
-<!-- Print / Download PDF button -->
 <div class="print-bar">
   <button class="btn-print" onclick="window.print()">
-    &#128438; &nbsp; Download / Print PDF
+    &#128438;&nbsp; Download / Print PDF
   </button>
 </div>
 
-<!-- A4 Invoice Page -->
 <div class="page">
 
   <!-- HEADER -->
-  <div class="inv-header">
+  <div class="bill-header">
     <div>
-      <div class="hosp-name">City General Hospital</div>
-      <div class="hosp-sub">Multi-Specialty Healthcare Centre</div>
-      <div class="hosp-addr">
-        123 Health Avenue, Chennai &mdash; 600 001<br>
-        Phone: +91 44 2222 3333 &nbsp;|&nbsp; GST: 33AABCH1234P1ZX<br>
-        Email: billing@cityhospital.in
+      <div class="brand-name">Medical Cost AI</div>
+      <div class="brand-sub">Patient Billing System</div>
+      <div class="brand-addr">
+        AI-Powered Medical Cost Prediction Platform<br>
+        support@medcostai.in &nbsp;|&nbsp; +91 44 2222 3333
       </div>
     </div>
-    <div class="inv-title-blk">
-      <div class="inv-title">INVOICE</div>
-      <div class="inv-number">Invoice No: #{patient_id}</div>
-      <div class="inv-number">Date: {reg_date} &nbsp; {reg_time}</div>
+    <div class="bill-title-blk">
+      <div class="bill-title">BILLING</div>
+      <div class="bill-patno">Patient No: #{patient_id}</div>
+      <div class="bill-patno">Date: {reg_date} &nbsp; {reg_time}</div>
     </div>
   </div>
 
   <!-- META STRIP -->
-  <div class="inv-meta">
+  <div class="bill-meta">
     <div class="meta-cell">
       <div class="meta-lbl">Billed To</div>
       <div class="meta-name">{patient_name}</div>
@@ -618,10 +602,9 @@ def render_invoice(patient_name, patient_id, reg_date, reg_time,
   </div>
 
   <!-- BODY -->
-  <div class="inv-body">
+  <div class="bill-body">
 
-    <!-- Line-items -->
-    <table class="inv-table">
+    <table class="bill-table">
       <thead>
         <tr>
           <th style="width:36px;">#</th>
@@ -634,35 +617,35 @@ def render_invoice(patient_name, patient_id, reg_date, reg_time,
         <tr>
           <td>1</td>
           <td>Base Hospitalization
-              <span class="inv-desc">Room ({room_type}), nursing care, facility &amp; overhead charges</span></td>
+              <span class="item-desc">Room ({room_type}), nursing care, facility &amp; overhead charges</span></td>
           <td style="text-align:center;">1</td>
           <td>&#8377;{bd['base']:,.2f}</td>
         </tr>
         <tr>
           <td>2</td>
           <td>Medical Condition &mdash; {medical_condition}
-              <span class="inv-desc">Risk level {RISK_MAP[medical_condition]}/3 &nbsp;&middot;&nbsp; Diagnostic &amp; condition-specific treatment costs</span></td>
+              <span class="item-desc">Risk level {RISK_MAP[medical_condition]}/3 &nbsp;&middot;&nbsp; Diagnostic &amp; condition-specific treatment costs</span></td>
           <td style="text-align:center;">1</td>
           <td>&#8377;{bd['condition']:,.2f}</td>
         </tr>
         <tr>
           <td>3</td>
           <td>Length of Stay Charges
-              <span class="inv-desc">{planned_stay} day(s) &nbsp;&middot;&nbsp; {admission_type} admission &nbsp;&middot;&nbsp; Daily ward charges</span></td>
+              <span class="item-desc">{planned_stay} day(s) &nbsp;&middot;&nbsp; {admission_type} admission &nbsp;&middot;&nbsp; Daily ward charges</span></td>
           <td style="text-align:center;">{planned_stay}</td>
           <td>&#8377;{bd['stay']:,.2f}</td>
         </tr>
         <tr>
           <td>4</td>
           <td>Medication &mdash; {drug_name}
-              <span class="inv-desc">{drug_class} &nbsp;&middot;&nbsp; Prescription drugs, consumables &amp; administration charges</span></td>
+              <span class="item-desc">{drug_class} &nbsp;&middot;&nbsp; Prescription drugs &amp; administration charges</span></td>
           <td style="text-align:center;">1</td>
           <td>&#8377;{bd['medication']:,.2f}</td>
         </tr>
         <tr>
           <td>5</td>
           <td>Ancillary &amp; Other Charges
-              <span class="inv-desc">Laboratory tests, imaging, surgical consumables &amp; miscellaneous services</span></td>
+              <span class="item-desc">Laboratory tests, imaging, consumables &amp; miscellaneous services</span></td>
           <td style="text-align:center;">1</td>
           <td>&#8377;{bd['other']:,.2f}</td>
         </tr>
@@ -710,17 +693,16 @@ def render_invoice(patient_name, patient_id, reg_date, reg_time,
   </div>
 
   <!-- FOOTER -->
-  <div class="inv-footer">
+  <div class="bill-footer">
     <div class="foot-note">
-      &#9877; This is a <strong>cost estimate</strong> generated by AI / ML model prediction. Final billing
-      may vary based on actual treatment and procedures performed.<br>
-      For billing queries: billing@cityhospital.in &nbsp;|&nbsp; +91 44 2222 3344 &nbsp;|&nbsp; City General Hospital, Chennai
+      &#9877; This is a <strong>cost estimate</strong> generated by AI / ML model prediction.
+      Final billing may vary based on actual treatment and procedures performed.<br>
+      Queries: support@medcostai.in &nbsp;|&nbsp; Medical Cost AI Platform
     </div>
     <div class="foot-stamp">AI Cost Estimate</div>
   </div>
 
 </div>
-
 </body>
 </html>"""
 
@@ -740,7 +722,7 @@ page = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     '<p style="font-size:0.73rem;color:#64748b;text-align:center;">'
-    'Patient Medical Cost Prediction<br>&#169; 2025 City General Hospital</p>',
+    'Patient Medical Cost Prediction<br>&#169; 2025 Medical Cost AI</p>',
     unsafe_allow_html=True
 )
 
@@ -754,14 +736,15 @@ init_csv()
 if page == "🔮 Predict Cost":
 
     st.title("🏥 Patient Medical Cost Prediction")
-    st.markdown("Fill in all three sections. A **Patient ID** will be generated and the full record saved automatically.")
+    st.markdown("Fill in all sections. Stay duration and room type are **assigned automatically** based on diagnosis. Cost preview updates live as you fill the form.")
 
+    # ── Condition picker (outside form for reactivity) ──
     if 'selected_condition' not in st.session_state:
         st.session_state.selected_condition = MEDICAL_CONDITIONS[0]
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">🩺 Select Primary Diagnosis First</div>', unsafe_allow_html=True)
-    st.markdown("This determines which medications are available in the form below.")
+    st.markdown("Stay duration, room type and medication list update automatically.")
     pre_condition = st.selectbox(
         "Primary Diagnosis", MEDICAL_CONDITIONS, key='pre_condition',
         index=MEDICAL_CONDITIONS.index(st.session_state.selected_condition)
@@ -769,8 +752,77 @@ if page == "🔮 Predict Cost":
     st.session_state.selected_condition = pre_condition
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # ── Auto-assigned values based on condition ─────────
+    auto_stay      = CONDITION_STAY_DAYS[st.session_state.selected_condition]
+    auto_room      = CONDITION_ROOM_TYPE[st.session_state.selected_condition]
     available_meds = CONDITION_MEDICATIONS[st.session_state.selected_condition]
 
+    # Show auto-assigned info box
+    st.markdown(
+        f'<div class="auto-info-box">'
+        f'<div class="auto-info-item">'
+        f'<span class="auto-info-label">&#128197; Auto Planned Stay</span>'
+        f'<span class="auto-info-value">{auto_stay} days</span>'
+        f'</div>'
+        f'<div class="auto-info-item">'
+        f'<span class="auto-info-label">&#127963; Auto Room Type</span>'
+        f'<span class="auto-info-value">{auto_room}</span>'
+        f'</div>'
+        f'<div class="auto-info-item">'
+        f'<span class="auto-info-label">&#9888; Risk Level</span>'
+        f'<span class="auto-info-value">{RISK_MAP[st.session_state.selected_condition]}/3</span>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Live preview (outside form — updates as user changes fields) ──
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">⚡ Live Cost Preview</div>', unsafe_allow_html=True)
+    st.markdown("Preview updates as you change Age, Gender, Insurance, Test Results, or Admission Type.")
+
+    prev_col1, prev_col2, prev_col3, prev_col4 = st.columns(4)
+    with prev_col1:
+        prev_age    = st.slider("Age", AGE_MIN, AGE_MAX, 30, key='prev_age')
+        prev_gender = st.radio("Gender", ["Male", "Female"], horizontal=True, key='prev_gender')
+    with prev_col2:
+        prev_blood    = st.selectbox("Blood Type",        BLOOD_TYPES,         key='prev_blood')
+        prev_test     = st.selectbox("Test Results",      TEST_RESULTS,        key='prev_test')
+    with prev_col3:
+        prev_ins      = st.selectbox("Insurance Provider", INSURANCE_PROVIDERS, key='prev_ins')
+        prev_admission = st.selectbox("Admission Type",   ADMISSION_TYPES,     key='prev_admission')
+    with prev_col4:
+        prev_med = st.selectbox(
+            f"Medication for {st.session_state.selected_condition}",
+            available_meds, key='prev_med'
+        )
+
+    # Run live prediction
+    live_pred, live_low, live_high, live_bd = quick_predict(
+        prev_age, prev_gender, prev_blood, prev_ins,
+        st.session_state.selected_condition,
+        prev_test, prev_admission, auto_stay
+    )
+
+    if live_pred is not None:
+        st.markdown(
+            f'<div class="preview-box">'
+            f'<div class="preview-title">&#128200; Estimated Cost Preview</div>'
+            f'<div class="preview-cost">&#8377;{live_pred:,.2f}</div>'
+            f'<div class="preview-range">Range: &#8377;{live_low:,.0f} &ndash; &#8377;{live_high:,.0f}</div>'
+            f'<div class="preview-rows">'
+            f'<span class="preview-row">&#9679; Base: &#8377;{live_bd["base"]:,.0f}</span>'
+            f'<span class="preview-row">&#9679; Condition: &#8377;{live_bd["condition"]:,.0f}</span>'
+            f'<span class="preview-row">&#9679; Stay ({auto_stay}d): &#8377;{live_bd["stay"]:,.0f}</span>'
+            f'<span class="preview-row">&#9679; Medication: &#8377;{live_bd["medication"]:,.0f}</span>'
+            f'<span class="preview-row">&#9679; Other: &#8377;{live_bd["other"]:,.0f}</span>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Registration form ───────────────────────────────
     with st.form("patient_form"):
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -796,38 +848,24 @@ if page == "🔮 Predict Cost":
                                              placeholder="Same as patient or different address", height=120)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">💊 Medical Information</div>', unsafe_allow_html=True)
-        m1c, m2c, m3c = st.columns(3)
-        with m1c:
-            age        = st.slider("Age (years)", AGE_MIN, AGE_MAX, 30)
-            gender     = st.radio("Gender", ["Male", "Female"], horizontal=True)
-            blood_type = st.selectbox("Blood Type", BLOOD_TYPES)
-        with m2c:
-            insurance_provider = st.selectbox("Insurance Provider", INSURANCE_PROVIDERS)
-            test_result        = st.selectbox("Test Results", TEST_RESULTS)
-            admission_type     = st.selectbox("Admission Type", ADMISSION_TYPES)
-        with m3c:
-            medication_display = st.selectbox(
-                f"Medication for {st.session_state.selected_condition}",
-                available_meds,
-                help="Clinically appropriate medications for the selected diagnosis."
-            )
-            planned_stay = st.slider("Planned Stay (days)", STAY_MIN, STAY_MAX, STAY_DEFAULT)
-            room_type    = st.selectbox("Room Type", ROOM_TYPES)
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.info(
+            f"✅ **Auto-assigned for {st.session_state.selected_condition}:** "
+            f"Stay = **{auto_stay} days** · Room = **{auto_room}** · Risk = **{RISK_MAP[st.session_state.selected_condition]}/3**  \n"
+            f"The values from the Live Cost Preview above will be used for registration."
+        )
 
-        submitted = st.form_submit_button("💰 Register Patient & Calculate Cost", type="primary")
+        submitted = st.form_submit_button("💰 Register Patient & Generate Billing", type="primary")
 
-    if medication_display:
-        drug_name, drug_class = parse_medication(medication_display)
-        bg, fg = DRUG_CLASS_COLORS.get(drug_class, ('#f1f5f9', '#334155'))
+    # Medication info panel
+    if prev_med:
+        drug_name_p, drug_class_p = parse_medication(prev_med)
+        bg, fg = DRUG_CLASS_COLORS.get(drug_class_p, ('#f1f5f9', '#334155'))
         st.markdown(
             f'<div class="med-info-box">'
-            f'<div class="med-info-drug">💊 {drug_name}</div>'
+            f'<div class="med-info-drug">💊 {drug_name_p}</div>'
             f'<div class="med-info-row"><b>Drug class:</b> '
             f'<span style="background:{bg};color:{fg};font-size:0.80rem;font-weight:600;'
-            f'padding:2px 10px;border-radius:20px;">{drug_class}</span></div>'
+            f'padding:2px 10px;border-radius:20px;">{drug_class_p}</span></div>'
             f'<div class="med-info-row"><b>Prescribed for:</b> {st.session_state.selected_condition}</div>'
             f'<div class="med-info-row" style="color:#64748b;font-size:0.82rem;">'
             f'ℹ️ Consult your physician before starting or changing any medication.</div>'
@@ -835,6 +873,7 @@ if page == "🔮 Predict Cost":
             unsafe_allow_html=True
         )
 
+    # ── After submit ──────────────────────────────────────
     if submitted:
         errors = []
         if not patient_name.strip():     errors.append("Patient Name is required.")
@@ -848,8 +887,19 @@ if page == "🔮 Predict Cost":
             for e in errors:
                 st.error(f"❌ {e}")
         else:
-            with st.spinner("Registering patient and calculating cost estimate…"):
+            with st.spinner("Registering patient and generating billing…"):
                 try:
+                    # Use values from live preview section
+                    age             = prev_age
+                    gender          = prev_gender
+                    blood_type      = prev_blood
+                    insurance_provider = prev_ins
+                    test_result     = prev_test
+                    admission_type  = prev_admission
+                    medication_display = prev_med
+                    planned_stay    = auto_stay
+                    room_type       = auto_room
+
                     encoded_med = closest_dataset_medication(st.session_state.selected_condition)
                     df_in, age_group = build_input_df(
                         age, gender, blood_type, insurance_provider,
@@ -907,14 +957,14 @@ if page == "🔮 Predict Cost":
                         st.markdown(f'<div class="pid-badge">{patient_id}</div>', unsafe_allow_html=True)
                         st.caption("Use this ID in **Patient Records** to retrieve all details anytime.")
                     with met_col:
-                        st.metric("Estimated Treatment Cost", f"₹{prediction:,.2f}")
+                        st.metric("Total Billing Amount", f"₹{prediction:,.2f}")
                         st.metric("Lower Estimate",  f"₹{lower_bound:,.0f}")
                         st.metric("Upper Estimate",  f"₹{upper_bound:,.0f}")
 
                     st.markdown("---")
-                    st.subheader("🧾 Hospital Cost Invoice")
-                    st.caption("Click **Download / Print PDF** inside the invoice to save as PDF.")
-                    render_invoice(
+                    st.subheader("🧾 Patient Billing")
+                    st.caption("Click **Download / Print PDF** inside the billing to save as PDF.")
+                    render_billing(
                         patient_name=patient_name.strip(),
                         patient_id=patient_id,
                         reg_date=reg_date, reg_time=reg_time,
@@ -974,7 +1024,7 @@ elif page == "🗂️ Patient Records":
             st.success(f"✅ Found — **{patient['Patient Name']}** ({patient['Patient ID']})")
             st.markdown("---")
 
-            tab_p, tab_m, tab_i = st.tabs(["👤 Personal Details", "🩺 Medical Details", "🧾 Invoice"])
+            tab_p, tab_m, tab_i = st.tabs(["👤 Personal Details", "🩺 Medical Details", "🧾 Billing"])
 
             with tab_p:
                 tp1, tp2 = st.columns(2)
@@ -1014,7 +1064,7 @@ elif page == "🗂️ Patient Records":
                     )
 
             with tab_i:
-                st.caption("Click **Download / Print PDF** inside the invoice to save as PDF.")
+                st.caption("Click **Download / Print PDF** inside the billing to save as PDF.")
                 bd_r = {
                     'base':       float(patient['Base Hospitalization']),
                     'condition':  float(patient['Medical Condition Cost']),
@@ -1022,7 +1072,7 @@ elif page == "🗂️ Patient Records":
                     'medication': float(patient['Medication Cost']),
                     'other':      float(patient['Other Charges']),
                 }
-                render_invoice(
+                render_billing(
                     patient_name=patient['Patient Name'],
                     patient_id=patient['Patient ID'],
                     reg_date=patient['Registration Date'],
@@ -1227,3 +1277,4 @@ elif page == "📈 Model Report":
         "near the dataset mean (₹25,595), which is the optimal answer when there is "
         "no learnable signal. This is an honest finding, not a code error."
     )
+  
