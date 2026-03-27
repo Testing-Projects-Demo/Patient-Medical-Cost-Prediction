@@ -2,8 +2,6 @@
 config.py
 ---------
 Central configuration file for the Patient Medical Cost Prediction project.
-All hardcoded values, file paths, and model parameters are defined here.
-Change values here — all scripts update automatically.
 """
 
 # ── File Paths ─────────────────────────────────────────
@@ -15,7 +13,7 @@ SCALER_PATH         = 'scaler.pkl'
 FEATURES_PATH       = 'selected_features.pkl'
 IMG_DIR             = 'img'
 
-# ── Dataset Values (exact values from dataset) ─────────
+# ── Dataset Values ─────────────────────────────────────
 MEDICAL_CONDITIONS  = ['Arthritis', 'Asthma', 'Cancer', 'Diabetes', 'Hypertension', 'Obesity']
 INSURANCE_PROVIDERS = ['Aetna', 'Blue Cross', 'Cigna', 'Medicare', 'UnitedHealthcare']
 BLOOD_TYPES         = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
@@ -24,15 +22,31 @@ TEST_RESULTS        = ['Normal', 'Inconclusive', 'Abnormal']
 GENDERS             = ['Male', 'Female']
 ROOM_TYPES          = ['General Ward', 'Semi-Private', 'Private', 'ICU']
 
-# ── Dataset medications (kept for model encoding compatibility) ─────────
-# These are the original values used during model training.
-# DO NOT remove — they are needed for feature encoding in model_prediction.py.
+# ── Dataset medications (kept for model encoding compatibility) ────
 MEDICATIONS = ['Aspirin', 'Ibuprofen', 'Lipitor', 'Paracetamol', 'Penicillin']
 
+# ── Auto Stay Days per Condition (system decides, no slider) ──────
+# Based on typical clinical guidelines for each condition
+CONDITION_STAY_DAYS = {
+    'Arthritis':    5,
+    'Asthma':       4,
+    'Cancer':       14,
+    'Diabetes':     7,
+    'Hypertension': 4,
+    'Obesity':      3,
+}
+
+# ── Auto Room Type per Condition ──────────────────────
+CONDITION_ROOM_TYPE = {
+    'Arthritis':    'General Ward',
+    'Asthma':       'Semi-Private',
+    'Cancer':       'Private',
+    'Diabetes':     'Semi-Private',
+    'Hypertension': 'General Ward',
+    'Obesity':      'General Ward',
+}
+
 # ── Real Clinical Medications per Disease ──────────────
-# Used only in app.py for the patient-facing dropdown.
-# Each condition maps to a list of clinically appropriate drugs.
-# Displayed as "Drug Name (Drug Class)" for clarity.
 CONDITION_MEDICATIONS = {
     'Arthritis': [
         'Methotrexate (DMARD)',
